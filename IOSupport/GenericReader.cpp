@@ -458,7 +458,7 @@ GenericReaderPlugin::getSequenceTimeDomainInternal(OfxRangeI& range,
     _originalFrameRange->getValue(originalMin, originalMax);
 
     // test if the host (probably Natron) set kParamOriginalFrameRange
-    if ( (originalMin != INT_MIN) && (originalMax != INT_MAX) ) {
+    if ( (originalMin != INT_MIN) && (originalMax != INT_MAX) && !canSetOriginalFrameRange ) {
         range.min = originalMin;
         range.max = originalMax;
 
