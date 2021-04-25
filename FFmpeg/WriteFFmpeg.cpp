@@ -1,6 +1,6 @@
 /* ***** BEGIN LICENSE BLOCK *****
  * This file is part of openfx-io <https://github.com/NatronGitHub/openfx-io>,
- * (C) 2018-2020 The Natron Developers
+ * (C) 2018-2021 The Natron Developers
  * (C) 2013-2018 INRIA
  *
  * openfx-io is free software: you can redistribute it and/or modify
@@ -558,6 +558,13 @@ codecCompatible(const AVOutputFormat *ofmt,
 {
     string fmt = string(ofmt->name);
 
+    // Explicitly deny format/codec combinations that don't produce timestamps.
+    // See also FFmpegFile::FFmpegFile() which contains a similar check.
+    if ( (fmt == "avi" && (codec_id == AV_CODEC_ID_MPEG1VIDEO ||
+                           codec_id == AV_CODEC_ID_MPEG2VIDEO ||
+                           codec_id == AV_CODEC_ID_H264) ) ) {
+        return false;
+    }
     return ( avformat_query_codec(ofmt, codec_id, FF_COMPLIANCE_NORMAL) == 1 ||
              ( fmt == "mxf" && (codec_id == AV_CODEC_ID_MPEG2VIDEO ||
                                 codec_id == AV_CODEC_ID_DNXHD ||
@@ -583,8 +590,11 @@ CreateCodecKnobLabelsMap()
     // Video codecs.
     m["avrp"]          = "AVrp\tAvid 1:1 10-bit RGB Packer";
     m["ayuv"]          = "AYUV\tUncompressed packed MS 4:4:4:4";
+    m["cfhd"]          = "CFHD\tGoPro Cineform HD";
     m["cinepak"]       = "cvid\tCinepak"; // disabled in whitelist (bad quality)
     m["dnxhd"]         = "AVdn\tAvid DNxHD / DNxHR / SMPTE VC-3";
+    m["dpx"]           = "dpx \tDPX (Digital Picture Exchange) image";
+    m["exr"]           = "exr \tEXR image";
     m["ffv1"]          = "FFV1\tFFmpeg video codec #1";
     m["ffvhuff"]       = "FFVH\tHuffyuv FFmpeg variant";
     m["flv"]           = "FLV1\tFLV / Sorenson Spark / Sorenson H.263 (Flash Video)";
@@ -594,8 +604,10 @@ CreateCodecKnobLabelsMap()
     m["huffyuv"]       = "HFYU\tHuffYUV";
     m["jpeg2000"]      = "mjp2\tJPEG 2000"; // disabled in whitelist (bad quality)
     m["jpegls"]        = "MJLS\tJPEG-LS"; // disabled in whitelist
+    m["libaom-av1"]    = "AV1\tlibaom AV1 encoder";
     m["libopenh264"]   = "H264\tCisco libopenh264 H.264/MPEG-4 AVC encoder";
     m["libopenjpeg"]   = "mjp2\tOpenJPEG JPEG 2000";
+    m["librav1e"]      = "AV1\trav1e AV1 encoder";
     m["libschroedinger"] = "drac\tSMPTE VC-2 (previously BBC Dirac Pro)";
     m["libtheora"]     = "theo\tTheora";
     m["libvpx"]        = "VP80\tOn2 VP8"; // write doesn't work yet
@@ -1036,6 +1048,11 @@ private:
         updateVisibility();
         updatePixelFormat();
     }
+
+    /**
+     * @brief Does the given filename support alpha channel.
+     **/
+    virtual bool supportsAlpha(const std::string&) const OVERRIDE FINAL;
 
     /** @brief the effect is about to be actively edited by a user, called when the first user interface is opened on an instance */
     virtual void beginEdit(void) OVERRIDE FINAL;
@@ -2507,9 +2524,11 @@ WriteFFmpegPlugin::configureVideoStream(AVCodec* avCodec,
 
         if (qMin >= 0) {
             avCodecContext->qmin = qMin;
+            av_opt_set_int(avCodecContext->priv_data, "qmin", qMin, 0);
         }
         if (qMax >= 0) {
             avCodecContext->qmax = qMax;
+            av_opt_set_int(avCodecContext->priv_data, "qmax", qMax, 0);
         }
     }
 
@@ -2664,8 +2683,8 @@ WriteFFmpegPlugin::configureVideoStream(AVCodec* avCodec,
     if (p.interGOP) {
         gopSize = _gopSize->getValue();
         if (gopSize >= 0) {
-            //avCodecContext->gop_size = gopSize;
-            av_opt_set_int(avCodecContext->priv_data, "g", 1, 0); // set the group of picture (GOP) size
+            avCodecContext->gop_size = gopSize; // set the group of picture (GOP) size
+            av_opt_set_int(avCodecContext->priv_data, "g", gopSize, 0);
         }
     }
 
@@ -2676,20 +2695,20 @@ WriteFFmpegPlugin::configureVideoStream(AVCodec* avCodec,
             bFrames = 0;
         }
         if (bFrames != -1) {
-            //avCodecContext->max_b_frames = bFrames;
-            av_opt_set_int(avCodecContext->priv_data, "bf", bFrames, 0); // set maximum number of B-frames between non-B-frames
+            avCodecContext->max_b_frames = bFrames; // set maximum number of B-frames between non-B-frames
+            av_opt_set_int(avCodecContext->priv_data, "bf", bFrames, 0);
 #if FF_API_PRIVATE_OPT
             // Strategy to choose between I/P/B-frames
             //avCodecContext->b_frame_strategy = 0; // deprecated: use encoder private option "b_strategy", see below
             av_opt_set_int(avCodecContext->priv_data, "b_strategy", 0, 0); // strategy to choose between I/P/B-frames
 #endif
-            //avCodecContext->b_quant_factor = 2.0f;
-            av_opt_set_double(avCodecContext->priv_data, "b_qfactor", 2., 0); // QP factor between P- and B-frames
+            avCodecContext->b_quant_factor = 2.0f; // QP factor between P- and B-frames
+            av_opt_set_double(avCodecContext->priv_data, "b_qfactor", 2., 0);
 
             if (bFrames == 0 && p.interGOP && gopSize < 0) {
                 // also set keyframe interval to 1, see https://trac.ffmpeg.org/wiki/Encode/VFX#Frame-by-Framescrubbing
-                //avCodecContext->gop_size = 1;
-                av_opt_set_int(avCodecContext->priv_data, "g", 1, 0); // set the group of picture (GOP) size
+                avCodecContext->gop_size = 1; // set the group of picture (GOP) size
+                av_opt_set_int(avCodecContext->priv_data, "g", 1, 0);
             }
         }
     }
@@ -3162,7 +3181,13 @@ mov64_av_encode(AVCodecContext *avctx,
                 const AVFrame *frame,
                 int *got_packet_ptr)
 {
-    return avcodec_encode_video2(avctx, avpkt, frame, got_packet_ptr);
+    if (avctx->codec_type == AVMEDIA_TYPE_VIDEO) {
+        return avcodec_encode_video2(avctx, avpkt, frame, got_packet_ptr);
+    } else if (avctx->codec_type == AVMEDIA_TYPE_AUDIO) {
+        return avcodec_encode_audio2(avctx, avpkt, frame, got_packet_ptr);
+    }
+
+    return -1;
 }
 
 #if OFX_FFMPEG_AUDIO
@@ -4121,6 +4146,9 @@ WriteFFmpegPlugin::beginEncode(const string& filename,
     if (AV_CODEC_ID_PNG == videoCodec->id) {
         encoder = "PNG";
     }
+    if (AV_CODEC_ID_DPX == videoCodec->id) {
+        encoder = "DPX";
+    }
     if (AV_CODEC_ID_TARGA == videoCodec->id) {
         encoder = "TGA";
     }
@@ -4816,6 +4844,13 @@ WriteFFmpegPlugin::onOutputFileChanged(const string &filename,
     updateVisibility();
 } // WriteFFmpegPlugin::onOutputFileChanged
 
+bool
+WriteFFmpegPlugin::supportsAlpha(const std::string&) const
+{
+    string pf;
+    _infoPixelFormat->getValue(pf);
+    return kSupportsRGBA && (pf.find('A') != string::npos);
+}
 
 static string
 ffmpeg_versions()

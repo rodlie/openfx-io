@@ -1,6 +1,6 @@
 /* ***** BEGIN LICENSE BLOCK *****
  * This file is part of openfx-io <https://github.com/NatronGitHub/openfx-io>,
- * (C) 2018-2020 The Natron Developers
+ * (C) 2018-2021 The Natron Developers
  * (C) 2013-2018 INRIA
  *
  * openfx-io is free software: you can redistribute it and/or modify
@@ -293,7 +293,6 @@ private:
     {
     public:
         MyAVPacket()
-        : wasPacketDecoded(false)
         {
             InitPacket();
         }
@@ -312,19 +311,14 @@ private:
         }
         void FreePacket()
         {
-            wasPacketDecoded = false;
-
             av_packet_unref(this); //av_free_packet(this);
         }
-
-        bool wasPacketDecoded;
     };
 
     std::string _filename;
 
     // AV structure
     AVFormatContext* _context;
-    AVInputFormat*   _format;
 
     // store all video streams available in the file
     std::vector<Stream*> _streams;

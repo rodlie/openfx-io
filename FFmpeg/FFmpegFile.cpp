@@ -1,6 +1,6 @@
 /* ***** BEGIN LICENSE BLOCK *****
  * This file is part of openfx-io <https://github.com/NatronGitHub/openfx-io>,
- * (C) 2018-2020 The Natron Developers
+ * (C) 2018-2021 The Natron Developers
  * (C) 2013-2018 INRIA
  *
  * openfx-io is free software: you can redistribute it and/or modify
@@ -159,7 +159,7 @@ const FilterEntry kFormatWhitelist[] =
     { "avi",            true,  true },
     { "dv",             true,  false },    // DV (Digital Video), no HD support
     { "flv",            true,  true },     // FLV (Flash Video), only used with flv codec. cannot be read in official Qt
-    { "gif",            true,  true },     // GIF Animation
+    { "gif",            true,  false },     // GIF Animation - write not supported as 8-bit only.
     { "h264",           true,  false },     // raw H.264 video. prefer a proper container (mp4, mov, avi)
     { "hevc",           true,  false },     // raw HEVC video. hevc codec cannot be read in official qt
     { "m4v",            true,  false },     // raw MPEG-4 video. prefer a proper container (mp4, mov, avi)
@@ -188,27 +188,35 @@ const FilterEntry kCodecWhitelist[] =
 {
     // Video codecs.
     { "aic",            true,  false },     // Apple Intermediate Codec (no encoder)
+    { "av1",            true,  false },    // Alliance for Open Media AV1 (encoders: libaom-av1 librav1e)
     { "avrp",           true,  UNSAFEQT0 && UNSAFEVLC },     // Avid 1:1 10-bit RGB Packer - write not supported as not official qt readable with relevant 3rd party codec.
     { "avui",           true,  false },     // Avid Meridien Uncompressed - write not supported as this is an SD only codec. Only 720x486 and 720x576 are supported. experimental in ffmpeg 2.6.1.
     { "ayuv",           true,  UNSAFEQT0 && UNSAFEVLC },     // Uncompressed packed MS 4:4:4:4 - write not supported as not official qt readable.
-    { "cfhd",           true,  false },     // Cineform HD.
+    { "cfhd",           true,  true },     // GoPro Cineform HD.
     { "cinepak",        true,  true },     // Cinepak.
+    { "cllc",           true,  false },    // Canopus Lossless Codec
     { "dnxhd",          true,  true },     // VC3/DNxHD
     { "dpx",            true,  true },     // DPX (Digital Picture Exchange) image
     { "dxv",            true,  false },     // Resolume DXV
+    { "exr",            true,  true },     // EXR image
     { "ffv1",           true,  UNSAFEQT0 && UNSAFEVLC },     // FFmpeg video codec #1 - write not supported as not official qt readable.
     { "ffvhuff",        true,  UNSAFEQT0 && UNSAFEVLC },     // Huffyuv FFmpeg variant - write not supported as not official qt readable.
     { "flv",            true,  UNSAFEQT0 },     // FLV / Sorenson Spark / Sorenson H.263 (Flash Video) - write not supported as not official qt readable.
-    { "gif",            true,  true },     // GIF (Graphics Interchange Format) - write not supported as 8-bit only.
+    { "gif",            true,  false },     // GIF (Graphics Interchange Format) - write not supported as 8-bit only.
     { "h263p",          true,  true },     // H.263+ / H.263-1998 / H.263 version 2
     { "h264",           true,  false },     // H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (the encoder is libx264)
     { "hap",            true,  true },     // Vidvox Hap
     { "hevc",           true,  false },     // H.265 / HEVC (High Efficiency Video Coding) (the encoder is libx265)
+    { "hq_hqa",         true,  false },    // Canopus HQ/HQA
+    { "hqx",            true,  false },    // Canopus HQX
     { "huffyuv",        true,  UNSAFEQT0 && UNSAFEVLC },     // HuffYUV - write not supported as not official qt readable.
     { "jpeg2000",       true,  UNSAFEQT0 },     // JPEG 2000 - write not supported as not official qt readable.
     { "jpegls",         true,  UNSAFEQT0 },     // JPEG-LS - write not supported as can't be read in in official qt.
+    { "libaom-av1",     true,  true },     // Alliance for Open Media AV1 encoder
+    { "libdav1d",       true,  false },    // Alliance for Open Media AV1 (encoder: libaom-av1)
     { "libopenh264",    true,  true },     // Cisco libopenh264 H.264/MPEG-4 AVC encoder
     { "libopenjpeg",    true,  true },     // OpenJPEG JPEG 2000
+    { "librav1e",       true,  true },     // rav1e AV1 encoder
     { "libschroedinger", true,  UNSAFEQT0 && UNSAFEVLC },     // libschroedinger Dirac - write untested. VLC plays with a wrong format
     { "libtheora",      true,  UNSAFEQT0 },     // libtheora Theora - write untested.
     { "libvpx",         true,  UNSAFEQT0 },     // On2 VP8
@@ -753,7 +761,6 @@ CheckStreamPropertiesMatch(const AVStream* streamA,
 FFmpegFile::FFmpegFile(const string & filename)
     : _filename(filename)
     , _context(nullptr)
-    , _format(nullptr)
     , _streams()
     , _selectedStream(nullptr)
     , _errorMsg()
@@ -777,7 +784,7 @@ FFmpegFile::FFmpegFile(const string & filename)
     // enabling drefs to allow reading from external tracks
     // this enables quicktime reference files demuxing
     av_dict_set(&demuxerOptions, "enable_drefs", "1", 0);
-    CHECK( avformat_open_input(&_context, _filename.c_str(), _format, &demuxerOptions) );
+    CHECK( avformat_open_input(&_context, _filename.c_str(), nullptr, &demuxerOptions) );
     if (demuxerOptions != nullptr) {
         // demuxerOptions is destroyed and replaced, on avformat_open_input return,
         // with a dict containing the options that were not found
@@ -802,7 +809,7 @@ FFmpegFile::FFmpegFile(const string & filename)
 #endif
 
     // fill the array with all available video streams
-    bool unsuported_codec = false;
+    bool unsupported_codec = false;
 
     // find all streams that the library is able to decode
     for (unsigned i = 0; i < _context->nb_streams; ++i) {
@@ -855,10 +862,22 @@ FFmpegFile::FFmpegFile(const string & filename)
         // skip codecs not in the white list
         //string reason;
         if ( !isCodecWhitelistedForReading(videoCodec->name) ) {
-# if TRACE_FILE_OPEN
+#         if TRACE_FILE_OPEN
             std::cout << "Decoder \"" << videoCodec->name << "\" disallowed, skipping..." << std::endl;
-# endif
-            unsuported_codec = true;
+#         endif
+            unsupported_codec = true;
+            continue;
+        }
+        // Some format/codec combinations, even if readable, do not have timestamps.
+        // See also codecCompatible() in WriteFFmpeg.cpp which contains a similar check.
+        if ((std::string(_context->iformat->name) == "avi") &&
+            (codecCtx->codec_id == AV_CODEC_ID_H264 ||
+             codecCtx->codec_id == AV_CODEC_ID_MPEG1VIDEO ||
+             codecCtx->codec_id == AV_CODEC_ID_MPEG2VIDEO) ) {
+#         if TRACE_FILE_OPEN
+            std::cout << "Decoder \"" << videoCodec->name << "\" in format \"" << _format->name << "\" disallowed because it lacks timestamps, skipping..." << std::endl;
+#         endif
+            unsupported_codec = true;
             continue;
         }
 
@@ -1017,7 +1036,7 @@ FFmpegFile::FFmpegFile(const string & filename)
         _streams.push_back(stream);
     }
     if ( _streams.empty() ) {
-        setError( unsuported_codec ? "unsupported codec..." : "unable to find video stream" );
+        setError( unsupported_codec ? "unsupported codec or format/codec combination" : "unable to find video stream" );
         _selectedStream = nullptr;
     } else {
 #pragma message WARN("should we build a separate FFmpegfile for each view? see also FFmpegFileManager")
@@ -1265,7 +1284,10 @@ FFmpegFile::decode(const ImageEffect* /*plugin*/,
         (stream->_codecContext->codec_id == AV_CODEC_ID_DNXHD) ||
         (stream->_codecContext->codec_id == AV_CODEC_ID_MJPEG) ||
         (stream->_codecContext->codec_id == AV_CODEC_ID_MJPEGB) ||
-        (stream->_codecContext->codec_id == AV_CODEC_ID_PNG)) {
+        (stream->_codecContext->codec_id == AV_CODEC_ID_PNG) ||
+        (stream->_codecContext->codec_id == AV_CODEC_ID_DPX) ||
+        (stream->_codecContext->codec_id == AV_CODEC_ID_TARGA) ||
+        (stream->_codecContext->codec_id == AV_CODEC_ID_TIFF)) {
         isIntraOnly = true;
     }
 
@@ -1355,7 +1377,32 @@ static int
 mov64_av_decode(AVCodecContext *avctx, AVFrame *frame,
                 int *got_frame, const AVPacket &pkt)
 {
-    return avcodec_decode_video2(avctx, frame, got_frame, &pkt);
+#if 1
+    if (avctx->codec_type == AVMEDIA_TYPE_VIDEO) {
+        return avcodec_decode_video2(avctx, frame, got_frame, &pkt);
+    } else if (avctx->codec_type == AVMEDIA_TYPE_AUDIO) {
+        return avcodec_decode_audio4(avctx, frame, got_frame, &pkt);
+    }
+
+    return -1;
+#else
+    AVPacket pkt_ = pkt;
+    int ret;
+    do {
+        if (avctx->codec_type == AVMEDIA_TYPE_VIDEO) {
+            ret = avcodec_decode_video2(avctx, frame, got_frame, &pkt_);
+        } else if (avctx->codec_type == AVMEDIA_TYPE_AUDIO) {
+            ret =  avcodec_decode_audio4(avctx, frame, got_frame, &pkt_);
+        }
+        if (ret < 0) {
+            break;
+        }
+        pkt_.data += ret;
+        pkt_.size -= ret;
+    } while (pkt_.size > 0);
+
+    return ret;
+#endif
 }
 
 bool FFmpegFile::demuxAndDecode(AVFrame* avFrameOut, int64_t frame)
@@ -1370,12 +1417,21 @@ bool FFmpegFile::demuxAndDecode(AVFrame* avFrameOut, int64_t frame)
     int frameDecoded          = 0;
     AVFrame* avFrameDecodeDst = stream->_avIntermediateFrame;
 
-    auto foundCorrectFrame = [stream](AVFrame* decodedFrame, int64_t targetFrameIdx) -> bool {
+    auto foundCorrectFrame = [this,stream](AVFrame* decodedFrame, int64_t targetFrameIdx) -> bool {
         bool found = false;
 
         // Fallback to using the DTS from the AVPacket that triggered returning this frame if no PTS is found
+        // Original code, which doesn't work (AVI/m1v):
+        // if (decodedFrame->pts == AV_NOPTS_VALUE) {
+        //     decodedFrame->pts = decodedFrame->pkt_dts;
+        // }
+        decodedFrame->pts = decodedFrame->best_effort_timestamp;
         if (decodedFrame->pts == AV_NOPTS_VALUE) {
-            decodedFrame->pts = decodedFrame->pkt_dts;
+            // A given framme cannot be read from a video with no timestamps.
+            // H.264 elementary packets have no timestamp.
+            // See https://libav-user.ffmpeg.narkive.com/HhouRdWQ/pts-from-best-effort-timestamp
+            setInternalError(-1, "FFmpeg Reader Video frames have no timestamp: ");
+            return false;
         }
 
         int64_t decodedFrameIdx = stream->ptsToFrame(decodedFrame->pts);
@@ -1521,7 +1577,9 @@ FFmpegFile::getInfo(int & width,
                     double & aspect,
                     int & frames)
 {
+#ifdef OFX_IO_MT_FFMPEG
     AutoMutex guard(_lock);
+#endif
 
     if (_streams.empty()) {
         return false;

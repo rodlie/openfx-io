@@ -1,6 +1,6 @@
 /* ***** BEGIN LICENSE BLOCK *****
  * This file is part of openfx-io <https://github.com/NatronGitHub/openfx-io>,
- * (C) 2018-2020 The Natron Developers
+ * (C) 2018-2021 The Natron Developers
  * (C) 2013-2018 INRIA
  *
  * openfx-io is free software: you can redistribute it and/or modify
@@ -151,6 +151,12 @@ private:
     virtual PreMultiplicationEnum getExpectedInputPremultiplication() const OVERRIDE FINAL { return eImagePreMultiplied; }
 
     virtual void onOutputFileChanged(const string& newFile, bool setColorSpace) OVERRIDE FINAL;
+
+    /**
+     * @brief Does the given filename support alpha channel.
+     **/
+    virtual bool supportsAlpha(const std::string&) const OVERRIDE FINAL { return kSupportsRGBA; }
+
     ChoiceParam* _compression;
     ChoiceParam* _bitDepth;
 };
